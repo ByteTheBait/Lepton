@@ -1,0 +1,265 @@
+/// Retained, diff-based screen buffer for alternate-screen TUIs.
+/// Import: `import "src/screen.ionic";`
+///
+/// Model: draw into an in-memory grid, then call `tui_flush()` to emit only the
+/// cells that changed since the previous flush. This keeps interactive redraws
+/// cheap and flicker-free.
+///
+///   import "src/screen.ionic";
+///   tui_begin();
+///   tui_clear(TUI_DEFAULT, TUI_DEFAULT);
+///   tui_box(2, 3, 8, 30, TUI_CYAN, TUI_DEFAULT);
+///   tui_text("Hello, TUI", 3, 5);
+///   tui_flush();
+///   mut k = tui_key();
+///   tui_end();
+///
+/// Cells are stored in flat int64 arrays of length width*height, in row-major
+/// order. Text drawn via `tui_text`/`tui_put` is treated as one column per byte
+/// (ASCII); box-drawing characters drawn via `tui_box` are handled as single
+/// wide-agnostic cells regardless of their UTF-8 byte length.
+import "term.ionic";
+
+// ── State ────────────────────────────────────────────────────────────────────
+// Current frame buffers...
+mut tui_ch  = [0];   // cell codepoint
+mut tui_fg  = [0];   // cell foreground SGR code
+mut tui_bg  = [0];   // cell background SGR code
+// ...and the previously-flushed frame, for diffing (-1 = never painted).
+mut tui_pch = [0];
+mut tui_pfg = [0];
+mut tui_pbg = [0];
+
+mut tui_w      = 0;  // width in columns
+mut tui_h      = 0;  // height in rows
+mut tui_dirty  = 0;  // 1 if any cell differs from the flushed frame
+mut tui_active = 0;  // 1 while in the alternate screen
+
+/// Encode a codepoint as a UTF-8 string. (The runtime's char_to_str is a raw
+/// single byte for 0..255, used by the lexer; TUI cell output needs real UTF-8.)
+fn tui_utf8(int64 c0) -> string {
+    mut c = c0;
+    if (c < 0) { c = 0; }
+    if (c < 0x80) {
+        return char_to_str(c);
+    } else if (c < 0x800) {
+        return str_concat(char_to_str(0xC0 | (c >> 6)), char_to_str(0x80 | (c & 0x3F)));
+    } else if (c < 0x10000) {
+        return str_concat(char_to_str(0xE0 | (c >> 12)),
+               str_concat(char_to_str(0x80 | ((c >> 6) & 0x3F)), char_to_str(0x80 | (c & 0x3F))));
+    }
+    return str_concat(char_to_str(0xF0 | (c >> 18)),
+           str_concat(char_to_str(0x80 | ((c >> 12) & 0x3F)),
+           str_concat(char_to_str(0x80 | ((c >> 6) & 0x3F)), char_to_str(0x80 | (c & 0x3F)))));
+}
+
+// ── (Re)allocation ────────────────────────────────────────────────────────────
+fn tui_alloc() -> int64 {
+    arr_reset(tui_ch);  arr_reset(tui_fg);  arr_reset(tui_bg);
+    arr_reset(tui_pch); arr_reset(tui_pfg); arr_reset(tui_pbg);
+    let n = tui_w * tui_h;
+    mut i = 0;
+    while (i < n) {
+        push(tui_ch, 32); push(tui_fg, TUI_DEFAULT); push(tui_bg, TUI_DEFAULT);
+        push(tui_pch, -1); push(tui_pfg, -1); push(tui_pbg, -1);
+        i = i + 1;
+    }
+    tui_dirty = 1;
+    return 0;
+}
+
+/// Enter the alternate screen and allocate the buffer at the current size.
+fn tui_begin() -> int64 {
+    tui_w = tui_cols();
+    tui_h = tui_rows();
+    tui_alloc();
+    term_enter();
+    tui_active = 1;
+    return 0;
+}
+
+/// Leave the alternate screen and restore the terminal.
+fn tui_end() -> int64 {
+    term_exit();
+    tui_active = 0;
+    return 0;
+}
+
+/// Re-read the terminal size and reallocate (clears the buffer). Call this when
+/// you detect a resize; the next flush repaints the whole screen.
+fn tui_resize() -> int64 {
+    tui_w = tui_cols();
+    tui_h = tui_rows();
+    tui_alloc();
+    return 0;
+}
+
+fn tui_mark() -> int64 { tui_dirty = 1; return 0; }
+
+// ── Coordinates ───────────────────────────────────────────────────────────────
+fn tui_idx(int64 row, int64 col) -> int64 {
+    return (row - 1) * tui_w + (col - 1);
+}
+
+fn tui_cell_ok(int64 row, int64 col) -> bool {
+    if (row < 1 || row > tui_h) { return false; }
+    if (col < 1 || col > tui_w) { return false; }
+    return true;
+}
+
+// ── Drawing ───────────────────────────────────────────────────────────────────
+/// Set a single cell to codepoint `code` (out-of-range is ignored).
+fn tui_put_char(int64 row, int64 col, int64 code, int64 fg, int64 bg) -> int64 {
+    if (!tui_cell_ok(row, col)) { return 0; }
+    let i = tui_idx(row, col);
+    tui_ch[i] = code; tui_fg[i] = fg; tui_bg[i] = bg;
+    tui_dirty = 1;
+    return 0;
+}
+
+/// Draw string `s` starting at (row, col). UTF-8 is decoded so each codepoint
+/// occupies one cell (multi-byte characters are not split across columns).
+fn tui_put(string s, int64 row, int64 col, int64 fg, int64 bg) -> int64 {
+    if (row < 1 || row > tui_h) { return 0; }
+    let n = str_len(s);
+    mut i = 0;
+    mut c = col;
+    for (step in 0..n) {
+        if (i >= n) { break; }
+        let b = str_index(s, i);
+        mut cp = b;
+        mut adv = 1;
+        if (b < 0x80) { cp = b; adv = 1; }
+        else if ((b & 0xE0) == 0xC0) {
+            cp = ((b & 0x1F) << 6) | (str_index(s, i + 1) & 0x3F); adv = 2;
+        } else if ((b & 0xF0) == 0xE0) {
+            cp = ((b & 0x0F) << 12) | ((str_index(s, i + 1) & 0x3F) << 6) | (str_index(s, i + 2) & 0x3F); adv = 3;
+        } else {
+            cp = ((b & 0x07) << 18) | ((str_index(s, i + 1) & 0x3F) << 12)
+               | ((str_index(s, i + 2) & 0x3F) << 6) | (str_index(s, i + 3) & 0x3F); adv = 4;
+        }
+        if (c >= 1 && c <= tui_w) {
+            let idx = tui_idx(row, c);
+            tui_ch[idx] = cp;
+            tui_fg[idx] = fg;
+            tui_bg[idx] = bg;
+        }
+        c = c + 1;
+        i = i + adv;
+    }
+    tui_dirty = 1;
+    return 0;
+}
+
+/// Draw text in the default colors.
+fn tui_text(string s, int64 row, int64 col) -> int64 {
+    return tui_put(s, row, col, TUI_DEFAULT, TUI_DEFAULT);
+}
+
+/// Draw text horizontally centered on `row`.
+fn tui_center(string s, int64 row, int64 fg, int64 bg) -> int64 {
+    let n = str_len(s);
+    mut col = (tui_w - n) / 2 + 1;
+    if (col < 1) { col = 1; }
+    return tui_put(s, row, col, fg, bg);
+}
+
+/// Fill every cell with a blank in the given colors.
+fn tui_clear(int64 fg, int64 bg) -> int64 {
+    let n = tui_ch.len;
+    mut i = 0;
+    while (i < n) {
+        tui_ch[i] = 32; tui_fg[i] = fg; tui_bg[i] = bg;
+        i = i + 1;
+    }
+    tui_dirty = 1;
+    return 0;
+}
+
+/// Fill a `h` x `w` rectangle with blanks (a solid panel / background).
+fn tui_fill(int64 row, int64 col, int64 h, int64 w, int64 fg, int64 bg) -> int64 {
+    mut r = 0;
+    while (r < h) {
+        mut c = 0;
+        while (c < w) { tui_put_char(row + r, col + c, 32, fg, bg); c = c + 1; }
+        r = r + 1;
+    }
+    return 0;
+}
+
+/// A horizontal run of `n` box-drawing dashes.
+fn tui_hline(int64 row, int64 col, int64 n, int64 fg, int64 bg) -> int64 {
+    mut i = 0;
+    while (i < n) { tui_put_char(row, col + i, 0x2500, fg, bg); i = i + 1; }
+    return 0;
+}
+
+/// A vertical run of `n` box-drawing bars.
+fn tui_vline(int64 row, int64 col, int64 n, int64 fg, int64 bg) -> int64 {
+    mut i = 0;
+    while (i < n) { tui_put_char(row + i, col, 0x2502, fg, bg); i = i + 1; }
+    return 0;
+}
+
+/// Draw a rounded-ish box border occupying `h` rows by `w` columns.
+fn tui_box(int64 row, int64 col, int64 h, int64 w, int64 fg, int64 bg) -> int64 {
+    if (h < 2 || w < 2) { return 0; }
+    tui_put_char(row, col, 0x250C, fg, bg);                 // ┌
+    tui_hline(row, col + 1, w - 2, fg, bg);
+    tui_put_char(row, col + w - 1, 0x2510, fg, bg);         // ┐
+    tui_put_char(row + h - 1, col, 0x2514, fg, bg);         // └
+    tui_hline(row + h - 1, col + 1, w - 2, fg, bg);
+    tui_put_char(row + h - 1, col + w - 1, 0x2518, fg, bg); // ┘
+    tui_vline(row + 1, col, h - 2, fg, bg);
+    tui_vline(row + 1, col + w - 1, h - 2, fg, bg);
+    return 0;
+}
+
+/// A box with a title embedded in the top border.
+fn tui_box_titled(string title, int64 row, int64 col, int64 h, int64 w, int64 fg, int64 bg) -> int64 {
+    tui_box(row, col, h, w, fg, bg);
+    tui_put(str_concat(" ", str_concat(title, " ")), row, col + 2, fg, bg);
+    return 0;
+}
+
+// ── Flush ─────────────────────────────────────────────────────────────────────
+/// Emit every cell that differs from the last flushed frame.
+fn tui_flush() -> int64 {
+    if (tui_dirty == 0) { return 0; }
+    if (tui_w <= 0) { return 0; }
+    mut out = "\e[?25l";
+    let n = tui_ch.len;
+    mut i = 0;
+    while (i < n) {
+        let ch = tui_ch[i];
+        let fg = tui_fg[i];
+        let bg = tui_bg[i];
+        if (ch != tui_pch[i] || fg != tui_pfg[i] || bg != tui_pbg[i]) {
+            let row = i / tui_w + 1;
+            let col = i - (row - 1) * tui_w + 1;
+            out = str_concat(out, tui_move(row, col));
+            out = str_concat(out, tui_sgr(fg, bg));
+            out = str_concat(out, tui_utf8(ch));
+            tui_pch[i] = ch; tui_pfg[i] = fg; tui_pbg[i] = bg;
+        }
+        i = i + 1;
+    }
+    out = str_concat(out, "\e[0m");
+    term_write(out);
+    tui_dirty = 0;
+    return 0;
+}
+
+/// Repaint the entire screen on the next flush, even if nothing changed.
+fn tui_flush_all() -> int64 {
+    let n = tui_pch.len;
+    mut i = 0;
+    while (i < n) { tui_pch[i] = -1; i = i + 1; }
+    return tui_flush();
+}
+
+/// Position the hardware cursor (used after `tui_flush` hides it).
+fn tui_show_cursor(int64 row, int64 col) -> int64 {
+    term_write(str_concat(tui_move(row, col), "\e[?25h"));
+    return 0;
+}

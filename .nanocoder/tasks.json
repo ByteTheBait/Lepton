@@ -1,0 +1,74 @@
+[
+  {
+    "id": "17d03ecc",
+    "title": "Scaffold smith/ and verify build+run loop",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "8fe04d40",
+    "title": "Hammer ASCII logo + intro screen",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "3d5685f1",
+    "title": "Implement src/json.ionic",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "0aaae304",
+    "title": "Implement src/config.ionic (no defaults)",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "be24cf66",
+    "title": "Implement src/tools.ionic (edit/multiedit/run/bgrun/...)",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "26005c3d",
+    "title": "Implement src/provider.ionic (curl, openai/anthropic)",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "bc52047c",
+    "title": "Implement src/agent.ionic (loop, history, compaction)",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "277f121e",
+    "title": "Implement src/ui.ionic + main loop",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  },
+  {
+    "id": "6b6ce82a",
+    "title": "End-to-end test (mock provider, TUI + --exec)",
+    "status": "completed",
+    "createdAt": "2026-09-30T14:47:48.480Z",
+    "updatedAt": "2026-09-30T14:47:48.480Z",
+    "completedAt": "2026-09-30T14:47:48.480Z"
+  }
+]

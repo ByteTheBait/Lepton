@@ -1,0 +1,31 @@
+// lepton demo: a boxed panel with live state and a key loop.
+// Build/run:  ./build.sh && ./demo
+import "../src/screen.ionic";
+
+mut count = 0;
+mut last  = "none";
+
+tui_begin();
+
+mut running = 1;
+while (running == 1) {
+    tui_clear(TUI_DEFAULT, TUI_DEFAULT);
+    tui_box_titled("lepton", 2, 3, 11, 46, TUI_CYAN, TUI_DEFAULT);
+    tui_put("Alternate-screen TUI framework", 4, 6, TUI_WHITE, TUI_DEFAULT);
+    tui_put(str_concat("count:    ", int64_to_str(count)), 6, 6, TUI_GREEN, TUI_DEFAULT);
+    tui_put(str_concat("last key: ", last), 7, 6, TUI_YELLOW, TUI_DEFAULT);
+    tui_put("up/down change the count", 9, 6, TUI_DEFAULT, TUI_DEFAULT);
+    tui_put("enter resets, q or Esc quits", 10, 6, TUI_DEFAULT, TUI_DEFAULT);
+    tui_center("press q to exit", 13, TUI_BLUE, TUI_DEFAULT);
+    tui_flush();
+
+    let k = tui_key();
+    last = tui_key_name(k);
+    if (k == 113 || k == KEY_ESC || k == KEY_ETX) { running = 0; }
+    if (k == KEY_UP)    { count = count + 1; }
+    if (k == KEY_DOWN)  { count = count - 1; }
+    if (k == KEY_ENTER) { count = 0; }
+}
+
+tui_end();
+println(str_concat("final count = ", int64_to_str(count)));

@@ -1,0 +1,117 @@
+/// Terminal primitives for building alternate-screen TUIs.
+/// Import: `import "term.ionic";` (or the whole framework via lepton/src/screen.ionic)
+///
+/// Thin, typed wrappers over the `term_*` runtime builtins plus the key and
+/// color constants shared by the rest of the TUI layer. Everything here is a
+/// pure, allocation-light helper; the retained screen buffer lives in
+/// `lepton`.
+///
+/// Raw mode is entered by `tui_begin` (see lepton), which also installs
+/// an atexit hook so the terminal is restored even if the program crashes.
+/// While raw mode is active, Ctrl-C arrives as the byte 3 (KEY_ETX) instead of
+/// a SIGINT, so apps should treat it as "quit".
+
+// ── Key codes ────────────────────────────────────────────────────────────────
+// Printable keys are their codepoint. Special keys use sentinels >= 1000,
+// matching the KEY_* values decoded in the C runtime.
+let KEY_UP        = 1000;
+let KEY_DOWN      = 1001;
+let KEY_RIGHT     = 1002;
+let KEY_LEFT      = 1003;
+let KEY_HOME      = 1004;
+let KEY_END       = 1005;
+let KEY_PGUP      = 1006;
+let KEY_PGDN      = 1007;
+let KEY_INS       = 1008;
+let KEY_DEL       = 1009;
+
+let KEY_ESC       = 27;
+let KEY_ENTER     = 13;
+let KEY_TAB       = 9;
+let KEY_BACKSPACE = 127;
+let KEY_ETX       = 3;    // Ctrl-C in raw mode
+let KEY_SPACE     = 32;
+
+// ── Colors (ANSI SGR) ────────────────────────────────────────────────────────
+// 0 means "terminal default". Foreground codes are 30-37, background 40-47.
+let TUI_DEFAULT  = 0;
+let TUI_BLACK    = 30;
+let TUI_RED      = 31;
+let TUI_GREEN    = 32;
+let TUI_YELLOW   = 33;
+let TUI_BLUE     = 34;
+let TUI_MAGENTA  = 35;
+let TUI_CYAN     = 36;
+let TUI_WHITE    = 37;
+let TUI_BBLACK   = 40;
+let TUI_BRED     = 41;
+let TUI_BGREEN   = 42;
+let TUI_BYELLOW  = 43;
+let TUI_BBLUE    = 44;
+let TUI_BMAGENTA = 45;
+let TUI_BCYAN    = 46;
+let TUI_BWHITE   = 47;
+
+/// Terminal width in columns.
+fn tui_cols() -> int64 {
+    let s = term_size();
+    return s / 1000;
+}
+
+/// Terminal height in rows.
+fn tui_rows() -> int64 {
+    let s = term_size();
+    return s - (s / 1000) * 1000;
+}
+
+/// True for the four arrow keys.
+fn tui_is_arrow(int64 k) -> bool {
+    if (k == KEY_UP || k == KEY_DOWN || k == KEY_LEFT || k == KEY_RIGHT) { return true; }
+    return false;
+}
+
+/// A short human-readable name for a key code (for status lines / debugging).
+fn tui_key_name(int64 k) -> string {
+    if (k == KEY_UP)    { return "Up"; }
+    if (k == KEY_DOWN)  { return "Down"; }
+    if (k == KEY_LEFT)  { return "Left"; }
+    if (k == KEY_RIGHT) { return "Right"; }
+    if (k == KEY_HOME)  { return "Home"; }
+    if (k == KEY_END)   { return "End"; }
+    if (k == KEY_PGUP)  { return "PgUp"; }
+    if (k == KEY_PGDN)  { return "PgDn"; }
+    if (k == KEY_INS)   { return "Ins"; }
+    if (k == KEY_DEL)   { return "Del"; }
+    if (k == KEY_ESC)   { return "Esc"; }
+    if (k == KEY_ENTER) { return "Enter"; }
+    if (k == KEY_TAB)   { return "Tab"; }
+    if (k == KEY_BACKSPACE) { return "Backspace"; }
+    if (k == KEY_SPACE) { return "Space"; }
+    if (k >= 33 && k < 127) { return char_to_str(k); }
+    return str_concat("key(", str_concat(int64_to_str(k), ")"));
+}
+
+/// Block for one keypress. Returns a codepoint or a KEY_* sentinel; -1 on EOF.
+fn tui_key() -> int64 {
+    return term_key();
+}
+
+/// Wait up to `ms` ms for input. 1 = ready, 0 = timeout.
+fn tui_poll(int64 ms) -> int64 {
+    return term_poll(ms);
+}
+
+/// Build an SGR escape for a foreground/background pair (0 = default). The
+/// result always begins with a reset so 0 reliably means "default".
+fn tui_sgr(int64 fg, int64 bg) -> string {
+    mut s = "\e[0";
+    if (fg != 0) { s = str_concat(s, str_concat(";", int64_to_str(fg))); }
+    if (bg != 0) { s = str_concat(s, str_concat(";", int64_to_str(bg))); }
+    return str_concat(s, "m");
+}
+
+/// Move the TTY cursor to 1-based column `col`, row `row` (returns the escape).
+fn tui_move(int64 row, int64 col) -> string {
+    return str_concat("\e[", str_concat(int64_to_str(row),
+           str_concat(";", str_concat(int64_to_str(col), "H"))));
+}
